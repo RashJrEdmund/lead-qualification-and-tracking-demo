@@ -1,0 +1,6 @@
+{
+  "name": "Lead Qualification Chatbot",
+  "description": "A modern lead qualification chatbot that extracts structured information from conversations and syncs lead data with Google Sheets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
