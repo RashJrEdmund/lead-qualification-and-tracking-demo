@@ -11,7 +11,7 @@ export interface ValidationError {
 }
 
 /**
- * Validates lead data on the server side before persisting it.
+ * Validates lead data before persisting to session storage.
  */
 export function validateLead(lead: Partial<Lead>): ValidationError[] {
   const errors: ValidationError[] = [];

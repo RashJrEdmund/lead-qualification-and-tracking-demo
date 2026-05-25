@@ -5,15 +5,17 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, Bot, User, RefreshCw, CheckCircle, Database, HelpCircle, CheckCircle2, ShieldCheck, HelpCircle as HelpIcon, Sparkles } from 'lucide-react';
-import { Message, Lead } from '../types';
+import { Message, Lead, WebLead } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
+import { generateChatResponse, extractStructuredLead } from '../services/ai';
+import { saveLead } from '../services/leadStorage';
+import { validateLead } from '../utils/validation';
 
 interface ChatWidgetProps {
-  onLeadQualified: (lead: Lead) => void;
-  sheetsConfigured: boolean;
+  onLeadQualified: (lead: WebLead) => void;
 }
 
-export function ChatWidget({ onLeadQualified, sheetsConfigured }: ChatWidgetProps) {
+export function ChatWidget({ onLeadQualified }: ChatWidgetProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'msg_1',
@@ -68,49 +70,54 @@ export function ChatWidget({ onLeadQualified, sheetsConfigured }: ChatWidgetProp
     setIsTyping(true);
 
     try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: updatedMessages.map(msg => ({ role: msg.role, content: msg.content }))
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error('API server returned error state.');
-      }
-
-      const data = await response.json();
+      const history = updatedMessages.map((msg) => ({ role: msg.role, content: msg.content }));
+      const assistantText = await generateChatResponse(history);
+      const extractedLead = await extractStructuredLead([
+        ...history,
+        { role: 'assistant' as const, content: assistantText },
+      ]);
 
       const assistantMessage: Message = {
         id: `msg_${Date.now() + 1}`,
         role: 'assistant',
-        content: data.message,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        content: assistantText,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
 
-      setMessages(prev => [...prev, assistantMessage]);
+      setMessages((prev) => [...prev, assistantMessage]);
 
-      if (data.extractedLead) {
-        const ext: Partial<Lead> = data.extractedLead;
-        setLiveLead(ext);
-        
-        // Once the AI signals complete qualification, we trigger submission to /api/leads
-        if (data.isComplete && !leadExtractionComplete) {
-          setLeadExtractionComplete(true);
-          await triggerLeadSubmission(ext);
-        }
+      const ext: Partial<Lead> = {
+        name: extractedLead.name ?? undefined,
+        email: extractedLead.email ?? undefined,
+        company: extractedLead.company ?? undefined,
+        interest: extractedLead.interest ?? undefined,
+        budget: extractedLead.budget ?? undefined,
+        timeline: extractedLead.timeline ?? undefined,
+        score: extractedLead.score,
+        conversationSummary: extractedLead.conversationSummary,
+      };
+      setLiveLead(ext);
+
+      if (extractedLead.isComplete && !leadExtractionComplete) {
+        setLeadExtractionComplete(true);
+        await triggerLeadSubmission(ext);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      setMessages(prev => [
+      const detail =
+        err instanceof Error ? err.message : 'Unknown error';
+      const isConfigError =
+        detail.includes('API key') || detail.includes('VITE_GEMINI');
+      setMessages((prev) => [
         ...prev,
         {
           id: `msg_err_${Date.now()}`,
           role: 'assistant',
-          content: "Sorry, I ran into a connection glitch. Let me try compiling our thread again. How should we proceed?",
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        }
+          content: isConfigError
+            ? detail
+            : `Sorry, something went wrong talking to Gemini: ${detail}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
       ]);
     } finally {
       setIsTyping(false);
@@ -118,43 +125,39 @@ export function ChatWidget({ onLeadQualified, sheetsConfigured }: ChatWidgetProp
   };
 
   const triggerLeadSubmission = async (leadToSubmit: Partial<Lead>) => {
-    setSyncStatus({ status: 'syncing', message: 'Lead qualified! Exchanging keys and syncing to systems...' });
+    setSyncStatus({ status: 'syncing', message: 'Lead qualified! Saving to session storage...' });
 
     try {
-      const res = await fetch('/api/leads', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: leadToSubmit.name,
-          email: leadToSubmit.email,
-          company: leadToSubmit.company,
-          interest: leadToSubmit.interest,
-          budget: leadToSubmit.budget,
-          timeline: leadToSubmit.timeline,
-          score: leadToSubmit.score || 50,
-          conversationSummary: leadToSubmit.conversationSummary || 'Qualified via organic chatbot conversation.'
-        })
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        setSyncStatus({
-          status: 'synced',
-          message: data.success 
-            ? 'Success! Handshake complete & synchronized directly with Google Sheets.'
-            : 'Stored Locally. Handshake completed but Google Sheet syncing is raw.'
-        });
-        // Callback parent to update global data table
-        onLeadQualified(data.lead);
-      } else {
+      const validationErrors = validateLead(leadToSubmit);
+      if (validationErrors.length > 0) {
         setSyncStatus({
           status: 'failed',
-          message: `Local store failure: ${data.error || 'Check fields formats.'}`
+          message: validationErrors.map((e) => e.message).join(' '),
         });
+        return;
       }
-    } catch (err: any) {
+
+      const savedLead = saveLead({
+        name: leadToSubmit.name!,
+        email: leadToSubmit.email!,
+        company: leadToSubmit.company!,
+        interest: leadToSubmit.interest!,
+        budget: leadToSubmit.budget || 'N/A',
+        timeline: leadToSubmit.timeline || 'N/A',
+        score: leadToSubmit.score || 50,
+        conversationSummary:
+          leadToSubmit.conversationSummary || 'Qualified via organic chatbot conversation.',
+        synced: false,
+      });
+
+      setSyncStatus({
+        status: 'synced',
+        message: 'Saved to session storage. Refresh the tab to reset demo data.',
+      });
+      onLeadQualified(savedLead);
+    } catch (err: unknown) {
       console.error(err);
-      setSyncStatus({ status: 'failed', message: 'Handshake communication interrupted.' });
+      setSyncStatus({ status: 'failed', message: 'Could not save lead to session storage.' });
     }
   };
 

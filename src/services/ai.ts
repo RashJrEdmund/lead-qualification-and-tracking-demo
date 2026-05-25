@@ -9,15 +9,19 @@ import { SYSTEM_PROMPT, EXTRACT_PROMPT } from "../utils/prompts";
 
 let aiInstance: GoogleGenAI | null = null;
 
+function getApiKey(): string {
+  return (import.meta.env.VITE_GEMINI_API_KEY ?? '').trim();
+}
+
 export function getGeminiClient(): GoogleGenAI {
+  const key = getApiKey();
+  if (!key) {
+    throw new Error(
+      'Gemini API key missing. Set GEMINI_API_KEY or VITE_GEMINI_API_KEY in .env, then restart the dev server.',
+    );
+  }
   if (!aiInstance) {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) {
-      console.warn("WARNING: GEMINI_API_KEY is not defined in environment variables. Calls will fail.");
-    }
-    aiInstance = new GoogleGenAI({
-      apiKey: key || '',
-    });
+    aiInstance = new GoogleGenAI({ apiKey: key });
   }
   return aiInstance;
 }

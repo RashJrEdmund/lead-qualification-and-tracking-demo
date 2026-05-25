@@ -36,7 +36,7 @@ export function SetupInstructions() {
         </div>
 
         <p className="text-slate-400 text-sm leading-relaxed">
-          This lead qualification manager connects server-side directly to your Google Sheets using secure Google APIs. To push qualified leads automatically, complete this simple 3-step credential sync:
+          This demo runs entirely in the browser and stores leads in session storage. The steps below describe how you would connect Google Sheets from a server using <span className="font-mono text-xs text-slate-300">src/services/sheets.ts</span>:
         </p>
 
         <section className="space-y-3.5">

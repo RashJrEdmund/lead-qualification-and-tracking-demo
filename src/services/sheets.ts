@@ -60,9 +60,8 @@ export async function saveLeadToSheets(lead: WebLead): Promise<{ success: boolea
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
 
-    const sheets = google.sheets({ version: 'v4', auth });
+    const sheets = google.sheets({ version: 'v4' });
 
-    // Validate spreadsheet access, and write to Sheet1 (or create fallback)
     const spreadsheetId = process.env.GOOGLE_SHEET_ID!;
 
     const rowValue = [
@@ -79,13 +78,14 @@ export async function saveLeadToSheets(lead: WebLead): Promise<{ success: boolea
 
     // Attempt append to Sheet1!A:I. Range A:I matching the columns sequence
     await sheets.spreadsheets.values.append({
+      auth,
       spreadsheetId,
       range: 'Sheet1!A:I',
       valueInputOption: 'USER_ENTERED',
       insertDataOption: 'INSERT_ROWS',
       requestBody: {
-        values: [rowValue]
-      }
+        values: [rowValue],
+      },
     });
 
     return {
