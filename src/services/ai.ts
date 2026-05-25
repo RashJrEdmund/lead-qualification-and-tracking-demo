@@ -17,11 +17,6 @@ export function getGeminiClient(): GoogleGenAI {
     }
     aiInstance = new GoogleGenAI({
       apiKey: key || '',
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
-      }
     });
   }
   return aiInstance;
