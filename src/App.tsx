@@ -6,18 +6,23 @@
 import React, { useState, useEffect } from 'react';
 import { ChatWidget } from './components/ChatWidget';
 import { Dashboard } from './components/Dashboard';
-import { SetupInstructions } from './components/SetupInstructions';
 import { WebLead } from './types';
-import { MessageSquare, Users2, Settings, FileSpreadsheet, Bot } from 'lucide-react';
+import { MessageSquare, Users2, FileSpreadsheet, Bot } from 'lucide-react';
 import { deleteLead, getAllLeads } from './services/leadStorage';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'dashboard' | 'setup'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'dashboard'>('chat');
   const [leads, setLeads] = useState<WebLead[]>([]);
 
   useEffect(() => {
     setLeads(getAllLeads());
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'dashboard') {
+      setLeads(getAllLeads());
+    }
+  }, [activeTab]);
 
   const handleLeadQualified = (newLead: WebLead) => {
     setLeads((prev) => {
@@ -92,30 +97,22 @@ export default function App() {
                 </span>
               )}
             </button>
-            <button
-              onClick={() => setActiveTab('setup')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer flex items-center gap-2 transition-all ${
-                activeTab === 'setup'
-                  ? 'bg-emerald-500 text-slate-950 font-bold shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Settings className="w-3.5 h-3.5" />
-              Setup Guide
-            </button>
           </div>
         </div>
       </header>
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-8 relative">
         <div className="space-y-6">
-          {activeTab === 'chat' && <ChatWidget onLeadQualified={handleLeadQualified} />}
+          {activeTab === 'chat' && (
+            <ChatWidget
+              onLeadQualified={handleLeadQualified}
+              onLeadsChange={() => setLeads(getAllLeads())}
+            />
+          )}
 
           {activeTab === 'dashboard' && (
             <Dashboard leads={leads} onDeleteLead={handleDeleteLead} sheetsConfigured={false} />
           )}
-
-          {activeTab === 'setup' && <SetupInstructions />}
         </div>
       </main>
 

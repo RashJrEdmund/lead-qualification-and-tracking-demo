@@ -40,7 +40,7 @@ export async function generateChatResponse(messages: Omit<Message, 'id' | 'times
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: MODEL_VERSION,
       contents: contents,
       config: {
         systemInstruction: SYSTEM_PROMPT,
@@ -67,6 +67,8 @@ export interface ExtractedLeadResult {
   isComplete: boolean;
 }
 
+const MODEL_VERSION = "gemini-3-flash-preview";
+
 /**
  * Structured information extractor from the current conversation logs
  */
@@ -80,7 +82,7 @@ export async function extractStructuredLead(messages: Omit<Message, 'id' | 'time
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: MODEL_VERSION,
       contents: [
         { role: 'user', parts: [{ text: `Transcript:\n\n${transcript}\n\nPerform extraction.` }] }
       ],

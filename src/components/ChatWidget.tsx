@@ -7,46 +7,70 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Send, Bot, User, RefreshCw, CheckCircle, Database, HelpCircle, CheckCircle2, ShieldCheck, HelpCircle as HelpIcon, Sparkles } from 'lucide-react';
 import { Message, Lead, WebLead } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { generateChatResponse, extractStructuredLead } from '../services/ai';
-import { saveLead } from '../services/leadStorage';
+import {
+  generateChatResponse,
+  extractStructuredLead,
+  type ExtractedLeadResult,
+} from '../services/ai';
+import {
+  clearChatSession,
+  getDefaultChatSession,
+  loadChatSession,
+  saveChatSession,
+} from '../services/chatSessionStorage';
+import { deleteLead, hasLeadData, saveLead, upsertSessionLead } from '../services/leadStorage';
 import { validateLead } from '../utils/validation';
 
 interface ChatWidgetProps {
   onLeadQualified: (lead: WebLead) => void;
+  onLeadsChange: () => void;
 }
 
-export function ChatWidget({ onLeadQualified }: ChatWidgetProps) {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 'msg_1',
-      role: 'assistant',
-      content: "Hello! I am Auden, your growth assistant at Apex Digital Solutions. Looking to build custom software or scale your systems? Tell me a bit about your project or business goals, and let's get started!",
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    }
-  ]);
+function normalizeField(value: string | null | undefined): string | undefined {
+  if (value == null) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'null') return undefined;
+  return trimmed;
+}
+
+function toPartialLead(extracted: ExtractedLeadResult): Partial<Lead> {
+  return {
+    name: normalizeField(extracted.name ?? undefined),
+    email: normalizeField(extracted.email ?? undefined),
+    company: normalizeField(extracted.company ?? undefined),
+    interest: normalizeField(extracted.interest ?? undefined),
+    budget: normalizeField(extracted.budget ?? undefined),
+    timeline: normalizeField(extracted.timeline ?? undefined),
+    score: extracted.score,
+    conversationSummary: extracted.conversationSummary,
+  };
+}
+
+export function ChatWidget({ onLeadQualified, onLeadsChange }: ChatWidgetProps) {
+  const [messages, setMessages] = useState<Message[]>(() => loadChatSession().messages);
   const [inputMsg, setInputMsg] = useState('');
   const [isTyping, setIsTyping] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<{ status: 'idle' | 'syncing' | 'synced' | 'failed'; message: string }>({
-    status: 'idle',
-    message: ''
-  });
-
-  // Extracted lead in progress from API responses
-  const [liveLead, setLiveLead] = useState<Partial<Lead>>({
-    name: undefined,
-    email: undefined,
-    company: undefined,
-    interest: undefined,
-    budget: undefined,
-    timeline: undefined,
-    score: 0,
-    conversationSummary: ''
-  });
-
-  const [leadExtractionComplete, setLeadExtractionComplete] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(() => loadChatSession().syncStatus);
+  const [liveLead, setLiveLead] = useState<Partial<Lead>>(() => loadChatSession().liveLead);
+  const [leadExtractionComplete, setLeadExtractionComplete] = useState(
+    () => loadChatSession().leadExtractionComplete,
+  );
+  const [sessionLeadId, setSessionLeadId] = useState<string | undefined>(
+    () => loadChatSession().sessionLeadId,
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll logic
+  useEffect(() => {
+    saveChatSession({ messages, liveLead, leadExtractionComplete, syncStatus, sessionLeadId });
+  }, [messages, liveLead, leadExtractionComplete, syncStatus, sessionLeadId]);
+
+  useEffect(() => {
+    if (sessionLeadId && hasLeadData(liveLead)) {
+      upsertSessionLead(sessionLeadId, liveLead);
+      onLeadsChange();
+    }
+  }, []);
+
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
@@ -86,21 +110,26 @@ export function ChatWidget({ onLeadQualified }: ChatWidgetProps) {
 
       setMessages((prev) => [...prev, assistantMessage]);
 
-      const ext: Partial<Lead> = {
-        name: extractedLead.name ?? undefined,
-        email: extractedLead.email ?? undefined,
-        company: extractedLead.company ?? undefined,
-        interest: extractedLead.interest ?? undefined,
-        budget: extractedLead.budget ?? undefined,
-        timeline: extractedLead.timeline ?? undefined,
-        score: extractedLead.score,
-        conversationSummary: extractedLead.conversationSummary,
-      };
+      const ext = toPartialLead(extractedLead);
       setLiveLead(ext);
 
-      if (extractedLead.isComplete && !leadExtractionComplete) {
+      let leadId = sessionLeadId;
+      if (!leadId) {
+        leadId = `lead_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        setSessionLeadId(leadId);
+      }
+
+      if (hasLeadData(ext)) {
+        upsertSessionLead(leadId, ext);
+        onLeadsChange();
+      }
+
+      const isFullyQualified =
+        extractedLead.isComplete || validateLead(ext).length === 0;
+
+      if (isFullyQualified && !leadExtractionComplete) {
         setLeadExtractionComplete(true);
-        await triggerLeadSubmission(ext);
+        await triggerLeadSubmission(ext, leadId);
       }
     } catch (err: unknown) {
       console.error(err);
@@ -124,7 +153,7 @@ export function ChatWidget({ onLeadQualified }: ChatWidgetProps) {
     }
   };
 
-  const triggerLeadSubmission = async (leadToSubmit: Partial<Lead>) => {
+  const triggerLeadSubmission = async (leadToSubmit: Partial<Lead>, leadId: string) => {
     setSyncStatus({ status: 'syncing', message: 'Lead qualified! Saving to session storage...' });
 
     try {
@@ -138,6 +167,7 @@ export function ChatWidget({ onLeadQualified }: ChatWidgetProps) {
       }
 
       const savedLead = saveLead({
+        id: leadId,
         name: leadToSubmit.name!,
         email: leadToSubmit.email!,
         company: leadToSubmit.company!,
@@ -152,9 +182,10 @@ export function ChatWidget({ onLeadQualified }: ChatWidgetProps) {
 
       setSyncStatus({
         status: 'synced',
-        message: 'Saved to session storage. Refresh the tab to reset demo data.',
+        message: 'Lead saved. Chat and progress persist until you reset or close this tab.',
       });
       onLeadQualified(savedLead);
+      onLeadsChange();
     } catch (err: unknown) {
       console.error(err);
       setSyncStatus({ status: 'failed', message: 'Could not save lead to session storage.' });
@@ -162,26 +193,18 @@ export function ChatWidget({ onLeadQualified }: ChatWidgetProps) {
   };
 
   const resetSession = () => {
-    setMessages([
-      {
-        id: 'msg_1',
-        role: 'assistant',
-        content: "Hello! I am Auden, your growth assistant at Apex Digital Solutions. Looking to build custom software or scale your systems? Tell me a bit about your project or business goals, and let's get started!",
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      }
-    ]);
-    setLiveLead({
-      name: undefined,
-      email: undefined,
-      company: undefined,
-      interest: undefined,
-      budget: undefined,
-      timeline: undefined,
-      score: 0,
-      conversationSummary: ''
-    });
-    setLeadExtractionComplete(false);
-    setSyncStatus({ status: 'idle', message: '' });
+    if (sessionLeadId) {
+      deleteLead(sessionLeadId);
+      onLeadsChange();
+    }
+    clearChatSession();
+    const fresh = getDefaultChatSession();
+    setMessages(fresh.messages);
+    setLiveLead(fresh.liveLead);
+    setLeadExtractionComplete(fresh.leadExtractionComplete);
+    setSyncStatus(fresh.syncStatus);
+    setSessionLeadId(undefined);
+    setInputMsg('');
   };
 
   return (

@@ -3,9 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { WebLead } from '../types';
+import { Lead, WebLead } from '../types';
+
+export function hasLeadData(lead: Partial<Lead>): boolean {
+  return !!(lead.name?.trim() || lead.email?.trim() || lead.company?.trim() || lead.interest?.trim());
+}
 
 const STORAGE_KEY = 'auden_leads';
+const SEEDED_KEY = 'auden_leads_seeded';
 
 const SEED_LEADS: WebLead[] = [
   {
@@ -41,11 +46,18 @@ const SEED_LEADS: WebLead[] = [
 function readLeads(): WebLead[] {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
-    if (!raw) return [...SEED_LEADS];
+    if (!raw) {
+      if (!sessionStorage.getItem(SEEDED_KEY)) {
+        sessionStorage.setItem(SEEDED_KEY, '1');
+        writeLeads([...SEED_LEADS]);
+        return [...SEED_LEADS];
+      }
+      return [];
+    }
     const parsed = JSON.parse(raw) as WebLead[];
-    return Array.isArray(parsed) ? parsed : [...SEED_LEADS];
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
-    return [...SEED_LEADS];
+    return [];
   }
 }
 
@@ -55,6 +67,24 @@ function writeLeads(leads: WebLead[]): void {
 
 export function getAllLeads(): WebLead[] {
   return readLeads();
+}
+
+/** Upserts the active chat session lead so the dashboard stays in sync while qualifying. */
+export function upsertSessionLead(id: string, partial: Partial<Lead>): WebLead | null {
+  if (!hasLeadData(partial)) return null;
+
+  return saveLead({
+    id,
+    name: partial.name?.trim() || 'In progress',
+    email: partial.email?.trim() || 'pending@demo.local',
+    company: partial.company?.trim() || '—',
+    interest: partial.interest?.trim() || 'Qualifying...',
+    budget: partial.budget || 'Pending',
+    timeline: partial.timeline || 'Pending',
+    score: partial.score ?? 0,
+    conversationSummary: partial.conversationSummary || '',
+    synced: false,
+  });
 }
 
 export function saveLead(
